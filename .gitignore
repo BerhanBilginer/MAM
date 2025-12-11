@@ -123,3 +123,7 @@ cython_debug/
 # IDE settings
 .idea/
 .vscode/
+
+# Project specific
+weights/
+data/
