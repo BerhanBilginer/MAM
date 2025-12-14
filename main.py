@@ -125,15 +125,20 @@ def run_panic_detection(
     args: argparse.Namespace,
 ) -> None:
     """Run panic detection with two windows: video with bboxes and heatmap."""
-    from src.detection.panic.panic import PanicDetector, draw_video_frame
+    from src.detection.panic.wrapper import PanicDetector, draw_video_frame
 
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps <= 0:
+        fps = 30.0
+        print(f"[WARNING] Could not detect FPS, using default {fps}")
 
-    panic_detector = PanicDetector(frame_width, frame_height)
+    panic_detector = PanicDetector(frame_width, frame_height, fps=fps)
     video_window = "MAM - Panic Detection (Video)"
     heatmap_window = "MAM - Panic Detection (Heatmap)"
     print("Press 'q' to quit.")
+    print(f"[INFO] Warmup period: {panic_detector.config.warmup_seconds}s")
 
     while True:
         ret, frame = cap.read()
@@ -147,13 +152,13 @@ def run_panic_detection(
             keypoint_conf_threshold=args.kp_conf,
         )
 
-        panic_result = panic_detector.process(detections)
+        panic_result = panic_detector.update(frame, detections)
 
         video_frame = draw_video_frame(frame, detections, panic_result)
         heatmap_frame = panic_detector.get_heatmap_image()
 
         if panic_result.is_panic:
-            print(f"[ALERT] PANIC detected! Entropy: {panic_result.entropy:.2f}")
+            print(f"[ALERT] PANIC detected! Score: {panic_result.score:.2f}")
 
         cv2.imshow(video_window, video_frame)
         cv2.imshow(heatmap_window, heatmap_frame)
