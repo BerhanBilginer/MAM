@@ -227,7 +227,7 @@ class PanicDetector:
             if "reconstruction_error" in m:
                 cv2.putText(
                     heatmap,
-                    f"Err: {m.get('reconstruction_error', 0.0):.4f}  Thr: {m.get('threshold', 0.0):.4f}",
+                    f"Err: {m.get('reconstruction_error', 0.0):.6g}  Thr: {m.get('threshold', 0.0):.6g}",
                     (16, 138),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.55,
@@ -288,9 +288,12 @@ def draw_video_frame(
     )
 
     # Draw score
+    score_text = f"Score: {result.score:.2f}"
+    if result.metrics and "reconstruction_error" in result.metrics:
+        score_text = f"Score: {float(result.score):.6g}"
     cv2.putText(
         annotated,
-        f"Score: {result.score:.2f}",
+        score_text,
         (10, 60),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.6,
@@ -315,7 +318,7 @@ def draw_video_frame(
         if "reconstruction_error" in m:
             cv2.putText(
                 annotated,
-                f"Err: {m.get('reconstruction_error', 0.0):.4f}  Thr: {m.get('threshold', 0.0):.4f}",
+                f"Err: {m.get('reconstruction_error', 0.0):.6g}  Thr: {m.get('threshold', 0.0):.6g}",
                 (10, 120),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,

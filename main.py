@@ -189,7 +189,13 @@ def run_panic_detection(
     heatmap_window = "MAM - Panic Detection (Heatmap)"
     if not args.no_display:
         print("Press 'q' to quit.")
-    print(f"[INFO] Warmup period: {panic_detector.config.warmup_seconds}s")
+    if args.panic_convlstm_model:
+        print(
+            "[INFO] ConvLSTM mode enabled: first decision available after "
+            f"{int(args.panic_convlstm_seq_len)} frames (sequence buffer)."
+        )
+    else:
+        print(f"[INFO] Warmup period: {panic_detector.config.warmup_seconds}s")
 
     writer = None
     if args.output:

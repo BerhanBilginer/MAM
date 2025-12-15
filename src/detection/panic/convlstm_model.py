@@ -236,11 +236,14 @@ class PanicConvLSTMDetector:
         )
         
         if Path(model_path).exists():
-            checkpoint = torch.load(model_path, map_location=self.device)
+            try:
+                checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+            except TypeError:
+                checkpoint = torch.load(model_path, map_location=self.device)
             self.model.load_state_dict(checkpoint['model_state_dict'])
-            self.threshold = checkpoint.get('threshold', self.threshold)
+            self.threshold = float(checkpoint.get('threshold', self.threshold))
             print(f"Loaded ConvLSTM model from {model_path}")
-            print(f"Threshold: {self.threshold:.4f}")
+            print(f"Threshold: {self.threshold:.6g}")
         else:
             print(f"WARNING: Model not found at {model_path}")
             print("Using untrained model - train first!")

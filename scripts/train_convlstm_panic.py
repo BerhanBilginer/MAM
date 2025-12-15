@@ -332,7 +332,7 @@ def train_model(
                 'optimizer_state_dict': optimizer.state_dict(),
                 'train_loss': train_loss,
                 'val_loss': val_loss,
-                'threshold': threshold,
+                'threshold': float(threshold),
             }, save_path)
             print(f"  ✓ Saved best model to {save_path}")
 
