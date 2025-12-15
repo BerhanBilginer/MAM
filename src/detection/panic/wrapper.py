@@ -12,6 +12,7 @@ from src.detection.panic.panic import (
     FusionPanicConfig,
     FusionPanicResult,
 )
+from src.detection.panic.convlstm_model import PanicConvLSTMDetector
 
 if TYPE_CHECKING:
     from numpy import typing as npt
@@ -20,12 +21,60 @@ if TYPE_CHECKING:
 class PanicDetector:
     """Wrapper for panic detection that works with PoseDetection objects."""
 
-    def __init__(self, frame_width: int, frame_height: int, fps: float = 30.0) -> None:
+    def __init__(
+        self,
+        frame_width: int,
+        frame_height: int,
+        fps: float = 30.0,
+        *,
+        convlstm_model_path: str | None = None,
+        convlstm_device: str | None = None,
+        convlstm_threshold: float | None = None,
+        convlstm_sequence_length: int = 16,
+        convlstm_image_size: int = 96,
+    ) -> None:
         self.config = FusionPanicConfig()
+
+        self._convlstm = None
+        if convlstm_model_path is not None:
+            self._convlstm = PanicConvLSTMDetector(
+                model_path=convlstm_model_path,
+                device=convlstm_device or "cpu",
+                threshold=convlstm_threshold if convlstm_threshold is not None else 0.1,
+                sequence_length=int(convlstm_sequence_length),
+                image_size=(int(convlstm_image_size), int(convlstm_image_size)),
+            )
+
         self.detector = YoloPoseFlowFusionPanic(fps=fps, config=self.config)
         self.frame_width = frame_width
         self.frame_height = frame_height
         self._last_result: FusionPanicResult | None = None
+
+        self._prev_gray_small = None
+        self._last_flow_mag = None
+
+    @staticmethod
+    def _create_bbox_heatmap(detections: list[PoseDetection], image_size: tuple[int, int]) -> np.ndarray:
+        h, w = image_size
+        heatmap = np.zeros((h, w), dtype=np.float32)
+
+        for det in detections:
+            x1, y1, x2, y2 = det.bbox
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            if x2 > x1 and y2 > y1:
+                heatmap[y1:y2, x1:x2] += 1.0
+
+        if heatmap.max() > 0:
+            heatmap = heatmap / heatmap.max()
+
+        return heatmap
+
+    @staticmethod
+    def _to_gray_small(frame_bgr: npt.NDArray[np.uint8], size: tuple[int, int]) -> npt.NDArray[np.uint8]:
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        return cv2.resize(gray, size)
 
     def process(self, detections: list[PoseDetection]) -> FusionPanicResult:
         """Process pose detections and return panic detection result."""
@@ -37,6 +86,62 @@ class PanicDetector:
         self, frame: npt.NDArray[np.uint8], detections: list[PoseDetection]
     ) -> FusionPanicResult:
         """Update panic detector with new frame and detections."""
+
+        if self._convlstm is not None:
+            h, w = self._convlstm.image_size
+            gray_small = self._to_gray_small(frame, (w, h))
+
+            if self._prev_gray_small is None:
+                self._prev_gray_small = gray_small
+                metrics = {
+                    "people": float(len(detections)),
+                    "reconstruction_error": 0.0,
+                    "threshold": float(self._convlstm.threshold),
+                }
+                result = FusionPanicResult(is_panic=False, score=0.0, metrics=metrics)
+                self._last_result = result
+                return result
+
+            flow = cv2.calcOpticalFlowFarneback(
+                self._prev_gray_small,
+                gray_small,
+                None,
+                pyr_scale=0.5,
+                levels=3,
+                winsize=15,
+                iterations=3,
+                poly_n=5,
+                poly_sigma=1.2,
+                flags=0,
+            )
+            self._prev_gray_small = gray_small
+
+            flow_mag = np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2).astype(np.float32)
+            flow_angle = np.arctan2(flow[..., 1], flow[..., 0]).astype(np.float32)
+            self._last_flow_mag = flow_mag
+
+            heatmap = self._create_bbox_heatmap(detections, (h, w))
+            out = self._convlstm.add_frame(flow_mag, flow_angle, heatmap)
+            if out is None:
+                metrics = {
+                    "people": float(len(detections)),
+                    "reconstruction_error": 0.0,
+                    "threshold": float(self._convlstm.threshold),
+                }
+                result = FusionPanicResult(is_panic=False, score=0.0, metrics=metrics)
+                self._last_result = result
+                return result
+
+            is_panic, err = out
+            metrics = {
+                "people": float(len(detections)),
+                "reconstruction_error": float(err),
+                "threshold": float(self._convlstm.threshold),
+            }
+            result = FusionPanicResult(is_panic=bool(is_panic), score=float(err), metrics=metrics)
+            self._last_result = result
+            return result
+
         # Convert PoseDetection to Detection
         simple_detections = [
             Detection(
@@ -58,8 +163,8 @@ class PanicDetector:
         heatmap = np.zeros((self.frame_height, self.frame_width, 3), dtype=np.uint8)
         
         # If we have flow magnitude data, visualize it
-        if self.detector._last_flow_mag is not None:
-            mag = self.detector._last_flow_mag
+        mag = self._last_flow_mag if self._last_flow_mag is not None else self.detector._last_flow_mag
+        if mag is not None:
             
             # Normalize magnitude to 0-255 range for visualization
             mag_normalized = np.clip(mag * 10, 0, 255).astype(np.uint8)
@@ -118,6 +223,17 @@ class PanicDetector:
                 (200, 200, 200),
                 1,
             )
+
+            if "reconstruction_error" in m:
+                cv2.putText(
+                    heatmap,
+                    f"Err: {m.get('reconstruction_error', 0.0):.4f}  Thr: {m.get('threshold', 0.0):.4f}",
+                    (16, 138),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (200, 200, 200),
+                    1,
+                )
         else:
             cv2.putText(
                 heatmap,
@@ -184,7 +300,8 @@ def draw_video_frame(
 
     # Draw metrics
     if result.metrics:
-        metrics_text = f"People: {int(result.metrics.get('people', 0))}"
+        m = result.metrics
+        metrics_text = f"People: {int(m.get('people', 0))}"
         cv2.putText(
             annotated,
             metrics_text,
@@ -194,5 +311,16 @@ def draw_video_frame(
             (255, 255, 255),
             2,
         )
+
+        if "reconstruction_error" in m:
+            cv2.putText(
+                annotated,
+                f"Err: {m.get('reconstruction_error', 0.0):.4f}  Thr: {m.get('threshold', 0.0):.4f}",
+                (10, 120),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                2,
+            )
 
     return annotated

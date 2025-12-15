@@ -81,6 +81,46 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_KP_CONF_THRESHOLD,
         help=f"Keypoint confidence threshold (default: {DEFAULT_KP_CONF_THRESHOLD}).",
     )
+
+    parser.add_argument(
+        "--panic-convlstm-model",
+        default=None,
+        help="Optional ConvLSTM panic model checkpoint path (.pt). If provided, panic decision uses ConvLSTM only.",
+    )
+    parser.add_argument(
+        "--panic-convlstm-device",
+        default=None,
+        help="Device for ConvLSTM panic model (defaults to --device).",
+    )
+    parser.add_argument(
+        "--panic-convlstm-seq-len",
+        type=int,
+        default=16,
+        help="Sequence length for ConvLSTM panic model (must match training).",
+    )
+    parser.add_argument(
+        "--panic-convlstm-image-size",
+        type=int,
+        default=96,
+        help="Image size for ConvLSTM features (must match training).",
+    )
+    parser.add_argument(
+        "--panic-convlstm-threshold",
+        type=float,
+        default=None,
+        help="Optional override for ConvLSTM anomaly threshold (defaults to checkpoint threshold).",
+    )
+
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional output video path (panic mode only).",
+    )
+    parser.add_argument(
+        "--no-display",
+        action="store_true",
+        help="Disable GUI windows (useful for Colab/headless).",
+    )
     return parser
 
 
@@ -134,11 +174,28 @@ def run_panic_detection(
         fps = 30.0
         print(f"[WARNING] Could not detect FPS, using default {fps}")
 
-    panic_detector = PanicDetector(frame_width, frame_height, fps=fps)
+    convlstm_device = args.panic_convlstm_device if args.panic_convlstm_device is not None else args.device
+    panic_detector = PanicDetector(
+        frame_width,
+        frame_height,
+        fps=fps,
+        convlstm_model_path=args.panic_convlstm_model,
+        convlstm_device=convlstm_device,
+        convlstm_threshold=args.panic_convlstm_threshold,
+        convlstm_sequence_length=args.panic_convlstm_seq_len,
+        convlstm_image_size=args.panic_convlstm_image_size,
+    )
     video_window = "MAM - Panic Detection (Video)"
     heatmap_window = "MAM - Panic Detection (Heatmap)"
-    print("Press 'q' to quit.")
+    if not args.no_display:
+        print("Press 'q' to quit.")
     print(f"[INFO] Warmup period: {panic_detector.config.warmup_seconds}s")
+
+    writer = None
+    if args.output:
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(args.output, fourcc, fps, (frame_width, frame_height))
+        print(f"[INFO] Writing output video to: {args.output}")
 
     while True:
         ret, frame = cap.read()
@@ -160,11 +217,18 @@ def run_panic_detection(
         if panic_result.is_panic:
             print(f"[ALERT] PANIC detected! Score: {panic_result.score:.2f}")
 
-        cv2.imshow(video_window, video_frame)
-        cv2.imshow(heatmap_window, heatmap_frame)
+        if writer is not None:
+            writer.write(video_frame)
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+        if not args.no_display:
+            cv2.imshow(video_window, video_frame)
+            cv2.imshow(heatmap_window, heatmap_frame)
+
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+
+    if writer is not None:
+        writer.release()
 
 
 def run_navigation(
