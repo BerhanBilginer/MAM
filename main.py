@@ -85,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--panic-convlstm-model",
         default=None,
-        help="Optional ConvLSTM panic model checkpoint path (.pt). If provided, panic decision uses ConvLSTM only.",
+        help="Optional ConvLSTM panic model checkpoint path (.pt). If provided, ConvLSTM anomaly signal is fused with baseline panic detector.",
     )
     parser.add_argument(
         "--panic-convlstm-device",
@@ -109,6 +109,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Optional override for ConvLSTM anomaly threshold (defaults to checkpoint threshold).",
+    )
+    parser.add_argument(
+        "--panic-convlstm-vmax",
+        type=float,
+        default=None,
+        help="Optional override for ConvLSTM flow vmax normalization (px/frame). Defaults to checkpoint vmax.",
     )
 
     parser.add_argument(
@@ -182,6 +188,7 @@ def run_panic_detection(
         convlstm_model_path=args.panic_convlstm_model,
         convlstm_device=convlstm_device,
         convlstm_threshold=args.panic_convlstm_threshold,
+        convlstm_vmax=args.panic_convlstm_vmax,
         convlstm_sequence_length=args.panic_convlstm_seq_len,
         convlstm_image_size=args.panic_convlstm_image_size,
     )

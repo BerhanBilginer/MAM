@@ -220,11 +220,13 @@ class PanicConvLSTMDetector:
         model_path: str,
         device: str = "cpu",
         threshold: float = 0.1,
+        vmax: float | None = None,
         sequence_length: int = 16,
         image_size: tuple = (64, 64),
     ):
         self.device = torch.device(device)
         self.threshold = threshold
+        self.vmax = float(vmax) if vmax is not None else 10.0
         self.sequence_length = sequence_length
         self.image_size = image_size
         
@@ -242,6 +244,8 @@ class PanicConvLSTMDetector:
                 checkpoint = torch.load(model_path, map_location=self.device)
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.threshold = float(checkpoint.get('threshold', self.threshold))
+            if vmax is None:
+                self.vmax = float(checkpoint.get('vmax', self.vmax))
             print(f"Loaded ConvLSTM model from {model_path}")
             print(f"Threshold: {self.threshold:.6g}")
         else:
@@ -269,7 +273,7 @@ class PanicConvLSTMDetector:
         else:
             bbox_heatmap = cv2.resize(bbox_heatmap, self.image_size)
 
-        vmax = 10.0
+        vmax = float(self.vmax)
         flow_x = np.clip(flow_x.astype(np.float32), -vmax, vmax) / vmax
         flow_y = np.clip(flow_y.astype(np.float32), -vmax, vmax) / vmax
         bbox_heatmap = np.clip(bbox_heatmap.astype(np.float32), 0.0, 1.0)

@@ -30,6 +30,7 @@ class PanicDetector:
         convlstm_model_path: str | None = None,
         convlstm_device: str | None = None,
         convlstm_threshold: float | None = None,
+        convlstm_vmax: float | None = None,
         convlstm_sequence_length: int = 16,
         convlstm_image_size: int = 96,
     ) -> None:
@@ -41,6 +42,7 @@ class PanicDetector:
                 model_path=convlstm_model_path,
                 device=convlstm_device or "cpu",
                 threshold=convlstm_threshold if convlstm_threshold is not None else 0.1,
+                vmax=convlstm_vmax,
                 sequence_length=int(convlstm_sequence_length),
                 image_size=(int(convlstm_image_size), int(convlstm_image_size)),
             )

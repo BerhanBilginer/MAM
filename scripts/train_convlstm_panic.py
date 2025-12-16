@@ -119,6 +119,7 @@ def extract_sequences_from_video(
     sequence_length: int = 16,
     image_size: tuple = (64, 64),
     stride: int = 8,
+    vmax: float = 10.0,
 ) -> list:
     """Extract sequences from a video."""
     print(f"\nProcessing: {video_path}")
@@ -157,7 +158,6 @@ def extract_sequences_from_video(
                 detections = detect_people(model, frame, conf=0.25, track=False)
                 bbox_heatmap = create_bbox_heatmap(detections, gray_small.shape)
  
-                vmax = 10.0
                 flow_x = flow[..., 0].astype(np.float32)
                 flow_y = flow[..., 1].astype(np.float32)
                 flow_x = np.clip(flow_x, -vmax, vmax) / vmax
@@ -193,6 +193,7 @@ def iter_sequences_from_video(
     sequence_length: int = 16,
     image_size: tuple = (64, 64),
     stride: int = 8,
+    vmax: float = 10.0,
 ) -> Iterator[np.ndarray]:
     print(f"\nProcessing: {video_path}")
 
@@ -269,6 +270,7 @@ def train_model(
     num_epochs: int,
     device: torch.device,
     save_path: str,
+    feature_vmax: float,
 ):
     """Train the ConvLSTM autoencoder."""
     criterion = nn.MSELoss()
@@ -331,6 +333,7 @@ def train_model(
                 'train_loss': train_loss,
                 'val_loss': val_loss,
                 'threshold': float(threshold),
+                'vmax': float(feature_vmax),
             }, save_path)
             print(f"  ✓ Saved best model to {save_path}")
 
@@ -345,6 +348,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=4, help="Batch size")
     parser.add_argument("--sequence-length", type=int, default=16, help="Sequence length")
     parser.add_argument("--image-size", type=int, default=64, help="Image size")
+    parser.add_argument("--vmax", type=float, default=10.0, help="Flow vmax for normalization (px/frame)")
     parser.add_argument("--val-split", type=float, default=0.2, help="Validation split")
     parser.add_argument(
         "--num-workers",
@@ -426,11 +430,12 @@ def main():
                             sequence_length=args.sequence_length,
                             image_size=(args.image_size, args.image_size),
                             stride=args.sequence_length // 2,
+                            vmax=float(args.vmax),
                         ):
+                            if dtype == np.float16:
+                                seq = seq.astype(np.float16)
                             dset.resize((n + 1,) + seq_shape)
                             if dtype == np.float16:
-                                dset[n] = seq.astype(np.float16)
-                            else:
                                 dset[n] = seq
                             n += 1
                             if n % 50 == 0:
@@ -479,6 +484,7 @@ def main():
                         sequence_length=args.sequence_length,
                         image_size=(args.image_size, args.image_size),
                         stride=args.sequence_length // 2,
+                        vmax=float(args.vmax),
                     ):
                         out = cache_dir / f"seq_{run_id}_{seq_idx:08d}.npy"
                         np.save(out, seq.astype(np.float16) if args.cache_float16 else seq)
@@ -518,6 +524,7 @@ def main():
                     sequence_length=args.sequence_length,
                     image_size=(args.image_size, args.image_size),
                     stride=args.sequence_length // 2,
+                    vmax=float(args.vmax),
                 )
                 all_sequences.extend(sequences)
 
@@ -574,6 +581,7 @@ def main():
         num_epochs=args.epochs,
         device=device,
         save_path=args.output,
+        feature_vmax=float(args.vmax),
     )
     
     print(f"\n✓ Training complete!")
