@@ -341,6 +341,12 @@ def train_model(
 def main():
     parser = argparse.ArgumentParser(description="Train ConvLSTM autoencoder for panic detection")
     parser.add_argument("--videos", nargs="+", required=True, help="Normal video paths")
+    parser.add_argument(
+        "--val-videos",
+        nargs="+",
+        default=None,
+        help="Optional validation video paths. If provided, overrides --val-split.",
+    )
     parser.add_argument("--output", required=True, help="Output model path")
     parser.add_argument("--model", default="weights/yolo11x-pose.pt", help="YOLO pose model")
     parser.add_argument("--device", default="cpu", help="Device (cpu, cuda:0)")
@@ -399,6 +405,9 @@ def main():
         h5_path = Path(args.hdf5_cache)
         h5_path.parent.mkdir(parents=True, exist_ok=True)
 
+        train_dset_name = "sequences_train" if args.val_videos else "sequences"
+        val_dset_name = "sequences_val" if args.val_videos else "sequences"
+
         if args.reuse_hdf5_cache and h5_path.exists():
             print(f"Reusing HDF5 cache: {h5_path}")
         else:
@@ -407,20 +416,31 @@ def main():
             print(f"Writing HDF5 cache to: {h5_path}")
 
             with h5py.File(h5_path, "w") as f:
-                dset = f.create_dataset(
-                    "sequences",
+                dset_train = f.create_dataset(
+                    train_dset_name,
                     shape=(0,) + seq_shape,
                     maxshape=(None,) + seq_shape,
                     dtype=dtype,
                     chunks=(1,) + seq_shape,
                     compression="lzf",
                 )
+                dset_val = None
+                if args.val_videos:
+                    dset_val = f.create_dataset(
+                        val_dset_name,
+                        shape=(0,) + seq_shape,
+                        maxshape=(None,) + seq_shape,
+                        dtype=dtype,
+                        chunks=(1,) + seq_shape,
+                        compression="lzf",
+                    )
                 f.attrs["sequence_length"] = int(args.sequence_length)
                 f.attrs["image_size"] = int(args.image_size)
                 f.attrs["stride"] = int(args.sequence_length // 2)
                 f.attrs["dtype"] = str(np.dtype(dtype))
+                f.attrs["vmax"] = float(args.vmax)
 
-                n = 0
+                n_train = 0
                 for video_pattern in args.videos:
                     video_paths = glob(video_pattern)
                     for video_path in video_paths:
@@ -434,115 +454,262 @@ def main():
                         ):
                             if dtype == np.float16:
                                 seq = seq.astype(np.float16)
-                            dset.resize((n + 1,) + seq_shape)
-                            if dtype == np.float16:
-                                dset[n] = seq
-                            n += 1
-                            if n % 50 == 0:
-                                print(f"  Cached {n} sequences")
+                            dset_train.resize((n_train + 1,) + seq_shape)
+                            dset_train[n_train] = seq
+                            n_train += 1
+                            if n_train % 50 == 0:
+                                print(f"  Cached train {n_train} sequences")
+
+                n_val = 0
+                if args.val_videos and dset_val is not None:
+                    for video_pattern in args.val_videos:
+                        video_paths = glob(video_pattern)
+                        for video_path in video_paths:
+                            for seq in iter_sequences_from_video(
+                                video_path,
+                                yolo_model,
+                                sequence_length=args.sequence_length,
+                                image_size=(args.image_size, args.image_size),
+                                stride=args.sequence_length // 2,
+                                vmax=float(args.vmax),
+                            ):
+                                if dtype == np.float16:
+                                    seq = seq.astype(np.float16)
+                                dset_val.resize((n_val + 1,) + seq_shape)
+                                dset_val[n_val] = seq
+                                n_val += 1
+                                if n_val % 50 == 0:
+                                    print(f"  Cached val {n_val} sequences")
 
             print("HDF5 cache write complete")
 
-        base_dataset = H5SequenceDataset(str(h5_path))
-        total = len(base_dataset)
-        print(f"\nTotal sequences extracted: {total}")
-        if total == 0:
-            print("ERROR: No sequences extracted!")
-            return 1
+        if args.val_videos:
+            train_dataset = H5SequenceDataset(str(h5_path), dataset_name=train_dset_name)
+            val_dataset = H5SequenceDataset(str(h5_path), dataset_name=val_dset_name)
+            print(f"\nTrain sequences extracted: {len(train_dataset)}")
+            print(f"Val sequences extracted: {len(val_dataset)}")
+            if len(train_dataset) == 0:
+                print("ERROR: No train sequences extracted!")
+                return 1
+            if len(val_dataset) == 0:
+                print("ERROR: No val sequences extracted!")
+                return 1
+        else:
+            base_dataset = H5SequenceDataset(str(h5_path), dataset_name=train_dset_name)
+            total = len(base_dataset)
+            print(f"\nTotal sequences extracted: {total}")
+            if total == 0:
+                print("ERROR: No sequences extracted!")
+                return 1
 
-        indices = np.random.permutation(total)
-        split_idx = int(total * (1 - args.val_split))
-        train_idx = indices[:split_idx].tolist()
-        val_idx = indices[split_idx:].tolist()
+            indices = np.random.permutation(total)
+            split_idx = int(total * (1 - args.val_split))
+            train_idx = indices[:split_idx].tolist()
+            val_idx = indices[split_idx:].tolist()
 
-        print(f"Train sequences: {len(train_idx)}")
-        print(f"Val sequences: {len(val_idx)}")
+            print(f"Train sequences: {len(train_idx)}")
+            print(f"Val sequences: {len(val_idx)}")
 
-        train_dataset = Subset(base_dataset, train_idx)
-        val_dataset = Subset(base_dataset, val_idx)
+            train_dataset = Subset(base_dataset, train_idx)
+            val_dataset = Subset(base_dataset, val_idx)
     elif args.cache_dir:
         cache_dir = Path(args.cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
-        index_path = cache_dir / "index.txt"
 
-        if args.reuse_cache and index_path.exists():
-            sequence_files = [
-                line.strip() for line in index_path.read_text().splitlines() if line.strip()
-            ]
-            print(f"Loaded {len(sequence_files)} cached sequences from: {index_path}")
+        train_index_path = cache_dir / ("train_index.txt" if args.val_videos else "index.txt")
+        val_index_path = cache_dir / "val_index.txt"
+
+        if args.val_videos:
+            if args.reuse_cache and train_index_path.exists() and val_index_path.exists():
+                train_files = [
+                    line.strip() for line in train_index_path.read_text().splitlines() if line.strip()
+                ]
+                val_files = [
+                    line.strip() for line in val_index_path.read_text().splitlines() if line.strip()
+                ]
+                print(f"Loaded {len(train_files)} cached train sequences from: {train_index_path}")
+                print(f"Loaded {len(val_files)} cached val sequences from: {val_index_path}")
+            else:
+                run_id = int(time.time())
+                train_files = []
+                val_files = []
+                train_idx = 0
+                val_idx = 0
+
+                for video_pattern in args.videos:
+                    video_paths = glob(video_pattern)
+                    for video_path in video_paths:
+                        for seq in iter_sequences_from_video(
+                            video_path,
+                            yolo_model,
+                            sequence_length=args.sequence_length,
+                            image_size=(args.image_size, args.image_size),
+                            stride=args.sequence_length // 2,
+                            vmax=float(args.vmax),
+                        ):
+                            out = cache_dir / f"train_seq_{run_id}_{train_idx:08d}.npy"
+                            np.save(out, seq.astype(np.float16) if args.cache_float16 else seq)
+                            train_files.append(str(out))
+                            train_idx += 1
+                            if train_idx % 50 == 0:
+                                print(f"  Cached train {train_idx} sequences")
+
+                for video_pattern in args.val_videos:
+                    video_paths = glob(video_pattern)
+                    for video_path in video_paths:
+                        for seq in iter_sequences_from_video(
+                            video_path,
+                            yolo_model,
+                            sequence_length=args.sequence_length,
+                            image_size=(args.image_size, args.image_size),
+                            stride=args.sequence_length // 2,
+                            vmax=float(args.vmax),
+                        ):
+                            out = cache_dir / f"val_seq_{run_id}_{val_idx:08d}.npy"
+                            np.save(out, seq.astype(np.float16) if args.cache_float16 else seq)
+                            val_files.append(str(out))
+                            val_idx += 1
+                            if val_idx % 50 == 0:
+                                print(f"  Cached val {val_idx} sequences")
+
+                train_index_path.write_text("\n".join(train_files) + ("\n" if train_files else ""))
+                val_index_path.write_text("\n".join(val_files) + ("\n" if val_files else ""))
+                print(f"Saved train cache index: {train_index_path}")
+                print(f"Saved val cache index: {val_index_path}")
+
+            print(f"\nTrain sequences extracted: {len(train_files)}")
+            print(f"Val sequences extracted: {len(val_files)}")
+            if len(train_files) == 0:
+                print("ERROR: No train sequences extracted!")
+                return 1
+            if len(val_files) == 0:
+                print("ERROR: No val sequences extracted!")
+                return 1
+
+            train_dataset = DiskSequenceDataset(train_files, mmap=True)
+            val_dataset = DiskSequenceDataset(val_files, mmap=True)
         else:
-            run_id = int(time.time())
-            sequence_files: list[str] = []
-            seq_idx = 0
+            index_path = train_index_path
+            if args.reuse_cache and index_path.exists():
+                sequence_files = [
+                    line.strip() for line in index_path.read_text().splitlines() if line.strip()
+                ]
+                print(f"Loaded {len(sequence_files)} cached sequences from: {index_path}")
+            else:
+                run_id = int(time.time())
+                sequence_files = []
+                seq_idx = 0
+
+                for video_pattern in args.videos:
+                    video_paths = glob(video_pattern)
+                    for video_path in video_paths:
+                        for seq in iter_sequences_from_video(
+                            video_path,
+                            yolo_model,
+                            sequence_length=args.sequence_length,
+                            image_size=(args.image_size, args.image_size),
+                            stride=args.sequence_length // 2,
+                            vmax=float(args.vmax),
+                        ):
+                            out = cache_dir / f"seq_{run_id}_{seq_idx:08d}.npy"
+                            np.save(out, seq.astype(np.float16) if args.cache_float16 else seq)
+                            sequence_files.append(str(out))
+                            seq_idx += 1
+
+                            if seq_idx % 50 == 0:
+                                print(f"  Cached {seq_idx} sequences")
+
+                index_path.write_text("\n".join(sequence_files) + ("\n" if sequence_files else ""))
+                print(f"Saved cache index: {index_path}")
+
+            print(f"\nTotal sequences extracted: {len(sequence_files)}")
+            if len(sequence_files) == 0:
+                print("ERROR: No sequences extracted!")
+                return 1
+
+            np.random.shuffle(sequence_files)
+            split_idx = int(len(sequence_files) * (1 - args.val_split))
+            train_files = sequence_files[:split_idx]
+            val_files = sequence_files[split_idx:]
+
+            print(f"Train sequences: {len(train_files)}")
+            print(f"Val sequences: {len(val_files)}")
+
+            train_dataset = DiskSequenceDataset(train_files, mmap=True)
+            val_dataset = DiskSequenceDataset(val_files, mmap=True)
+    else:
+        if args.val_videos:
+            train_sequences: list[np.ndarray] = []
+            val_sequences: list[np.ndarray] = []
 
             for video_pattern in args.videos:
                 video_paths = glob(video_pattern)
                 for video_path in video_paths:
-                    for seq in iter_sequences_from_video(
+                    sequences = extract_sequences_from_video(
                         video_path,
                         yolo_model,
                         sequence_length=args.sequence_length,
                         image_size=(args.image_size, args.image_size),
                         stride=args.sequence_length // 2,
                         vmax=float(args.vmax),
-                    ):
-                        out = cache_dir / f"seq_{run_id}_{seq_idx:08d}.npy"
-                        np.save(out, seq.astype(np.float16) if args.cache_float16 else seq)
-                        sequence_files.append(str(out))
-                        seq_idx += 1
+                    )
+                    train_sequences.extend(sequences)
 
-                        if seq_idx % 50 == 0:
-                            print(f"  Cached {seq_idx} sequences")
+            for video_pattern in args.val_videos:
+                video_paths = glob(video_pattern)
+                for video_path in video_paths:
+                    sequences = extract_sequences_from_video(
+                        video_path,
+                        yolo_model,
+                        sequence_length=args.sequence_length,
+                        image_size=(args.image_size, args.image_size),
+                        stride=args.sequence_length // 2,
+                        vmax=float(args.vmax),
+                    )
+                    val_sequences.extend(sequences)
 
-            index_path.write_text("\n".join(sequence_files) + ("\n" if sequence_files else ""))
-            print(f"Saved cache index: {index_path}")
+            print(f"\nTrain sequences extracted: {len(train_sequences)}")
+            print(f"Val sequences extracted: {len(val_sequences)}")
+            if len(train_sequences) == 0:
+                print("ERROR: No train sequences extracted!")
+                return 1
+            if len(val_sequences) == 0:
+                print("ERROR: No val sequences extracted!")
+                return 1
 
-        print(f"\nTotal sequences extracted: {len(sequence_files)}")
-        if len(sequence_files) == 0:
-            print("ERROR: No sequences extracted!")
-            return 1
+            train_dataset = NormalMotionDataset(train_sequences)
+            val_dataset = NormalMotionDataset(val_sequences)
+        else:
+            all_sequences: list[np.ndarray] = []
 
-        np.random.shuffle(sequence_files)
-        split_idx = int(len(sequence_files) * (1 - args.val_split))
-        train_files = sequence_files[:split_idx]
-        val_files = sequence_files[split_idx:]
+            for video_pattern in args.videos:
+                video_paths = glob(video_pattern)
+                for video_path in video_paths:
+                    sequences = extract_sequences_from_video(
+                        video_path,
+                        yolo_model,
+                        sequence_length=args.sequence_length,
+                        image_size=(args.image_size, args.image_size),
+                        stride=args.sequence_length // 2,
+                        vmax=float(args.vmax),
+                    )
+                    all_sequences.extend(sequences)
 
-        print(f"Train sequences: {len(train_files)}")
-        print(f"Val sequences: {len(val_files)}")
+            print(f"\nTotal sequences extracted: {len(all_sequences)}")
+            if len(all_sequences) == 0:
+                print("ERROR: No sequences extracted!")
+                return 1
 
-        train_dataset = DiskSequenceDataset(train_files, mmap=True)
-        val_dataset = DiskSequenceDataset(val_files, mmap=True)
-    else:
-        all_sequences: list[np.ndarray] = []
+            np.random.shuffle(all_sequences)
+            split_idx = int(len(all_sequences) * (1 - args.val_split))
+            train_sequences = all_sequences[:split_idx]
+            val_sequences = all_sequences[split_idx:]
 
-        for video_pattern in args.videos:
-            video_paths = glob(video_pattern)
-            for video_path in video_paths:
-                sequences = extract_sequences_from_video(
-                    video_path,
-                    yolo_model,
-                    sequence_length=args.sequence_length,
-                    image_size=(args.image_size, args.image_size),
-                    stride=args.sequence_length // 2,
-                    vmax=float(args.vmax),
-                )
-                all_sequences.extend(sequences)
+            print(f"Train sequences: {len(train_sequences)}")
+            print(f"Val sequences: {len(val_sequences)}")
 
-        print(f"\nTotal sequences extracted: {len(all_sequences)}")
-        if len(all_sequences) == 0:
-            print("ERROR: No sequences extracted!")
-            return 1
-
-        np.random.shuffle(all_sequences)
-        split_idx = int(len(all_sequences) * (1 - args.val_split))
-        train_sequences = all_sequences[:split_idx]
-        val_sequences = all_sequences[split_idx:]
-
-        print(f"Train sequences: {len(train_sequences)}")
-        print(f"Val sequences: {len(val_sequences)}")
-
-        train_dataset = NormalMotionDataset(train_sequences)
-        val_dataset = NormalMotionDataset(val_sequences)
+            train_dataset = NormalMotionDataset(train_sequences)
+            val_dataset = NormalMotionDataset(val_sequences)
     
     train_loader = DataLoader(
         train_dataset,
