@@ -93,8 +93,8 @@ class H5SequenceDataset(Dataset):
         return torch.from_numpy(arr).float()
 
 
-def create_pose_heatmap(detections, image_size: tuple) -> np.ndarray:
-    """Create pose heatmap from detections."""
+def create_bbox_heatmap(detections, image_size: tuple) -> np.ndarray:
+    """Create bbox heatmap from detections."""
     h, w = image_size
     heatmap = np.zeros((h, w), dtype=np.float32)
     
@@ -153,20 +153,19 @@ def extract_sequences_from_video(
                     pyr_scale=0.5, levels=3, winsize=15,
                     iterations=3, poly_n=5, poly_sigma=1.2, flags=0
                 )
-                
-                flow_mag = np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)
-                flow_angle = np.arctan2(flow[..., 1], flow[..., 0])
-                
+ 
                 detections = detect_people(model, frame, conf=0.25, track=False)
-                pose_heatmap = create_pose_heatmap(detections, gray_small.shape)
-                
-                flow_x = flow_mag * np.cos(flow_angle)
-                flow_y = flow_mag * np.sin(flow_angle)
-                
-                features = np.stack([flow_x, flow_y, pose_heatmap], axis=0)
-                features = features / (np.max(np.abs(features)) + 1e-6)
-                
-                frame_buffer.append(features.astype(np.float32))
+                bbox_heatmap = create_bbox_heatmap(detections, gray_small.shape)
+ 
+                vmax = 10.0
+                flow_x = flow[..., 0].astype(np.float32)
+                flow_y = flow[..., 1].astype(np.float32)
+                flow_x = np.clip(flow_x, -vmax, vmax) / vmax
+                flow_y = np.clip(flow_y, -vmax, vmax) / vmax
+                bbox_heatmap = np.clip(bbox_heatmap, 0.0, 1.0).astype(np.float32)
+ 
+                features = np.stack([flow_x, flow_y, bbox_heatmap], axis=0).astype(np.float32)
+                frame_buffer.append(features)
                 
                 if len(frame_buffer) == sequence_length:
                     sequence = np.stack(frame_buffer, axis=0)
@@ -233,20 +232,19 @@ def iter_sequences_from_video(
                     poly_sigma=1.2,
                     flags=0,
                 )
-
-                flow_mag = np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2)
-                flow_angle = np.arctan2(flow[..., 1], flow[..., 0])
-
+ 
                 detections = detect_people(model, frame, conf=0.25, track=False)
-                pose_heatmap = create_pose_heatmap(detections, gray_small.shape)
-
-                flow_x = flow_mag * np.cos(flow_angle)
-                flow_y = flow_mag * np.sin(flow_angle)
-
-                features = np.stack([flow_x, flow_y, pose_heatmap], axis=0)
-                features = features / (np.max(np.abs(features)) + 1e-6)
-
-                frame_buffer.append(features.astype(np.float32))
+                bbox_heatmap = create_bbox_heatmap(detections, gray_small.shape)
+ 
+                vmax = 10.0
+                flow_x = flow[..., 0].astype(np.float32)
+                flow_y = flow[..., 1].astype(np.float32)
+                flow_x = np.clip(flow_x, -vmax, vmax) / vmax
+                flow_y = np.clip(flow_y, -vmax, vmax) / vmax
+                bbox_heatmap = np.clip(bbox_heatmap, 0.0, 1.0).astype(np.float32)
+ 
+                features = np.stack([flow_x, flow_y, bbox_heatmap], axis=0).astype(np.float32)
+                frame_buffer.append(features)
 
                 if len(frame_buffer) == sequence_length:
                     yield np.stack(frame_buffer, axis=0)

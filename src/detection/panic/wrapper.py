@@ -87,21 +87,30 @@ class PanicDetector:
     ) -> FusionPanicResult:
         """Update panic detector with new frame and detections."""
 
-        if self._convlstm is not None:
-            h, w = self._convlstm.image_size
-            gray_small = self._to_gray_small(frame, (w, h))
+        simple_detections = [
+            Detection(
+                bbox=det.bbox,
+                confidence=det.confidence,
+                class_id=det.class_id,
+                class_name=det.class_name,
+                track_id=None,
+            )
+            for det in detections
+        ]
+        baseline_result = self.detector.update(frame, simple_detections)
 
-            if self._prev_gray_small is None:
-                self._prev_gray_small = gray_small
-                metrics = {
-                    "people": float(len(detections)),
-                    "reconstruction_error": 0.0,
-                    "threshold": float(self._convlstm.threshold),
-                }
-                result = FusionPanicResult(is_panic=False, score=0.0, metrics=metrics)
-                self._last_result = result
-                return result
+        if self._convlstm is None:
+            self._last_result = baseline_result
+            return baseline_result
 
+        h, w = self._convlstm.image_size
+        gray_small = self._to_gray_small(frame, (w, h))
+
+        conv_is_panic = False
+        conv_err = 0.0
+        conv_thr = float(self._convlstm.threshold)
+
+        if self._prev_gray_small is not None:
             flow = cv2.calcOpticalFlowFarneback(
                 self._prev_gray_small,
                 gray_small,
@@ -114,46 +123,41 @@ class PanicDetector:
                 poly_sigma=1.2,
                 flags=0,
             )
-            self._prev_gray_small = gray_small
 
-            flow_mag = np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2).astype(np.float32)
-            flow_angle = np.arctan2(flow[..., 1], flow[..., 0]).astype(np.float32)
-            self._last_flow_mag = flow_mag
+            flow_x = flow[..., 0].astype(np.float32)
+            flow_y = flow[..., 1].astype(np.float32)
+            self._last_flow_mag = np.sqrt(flow_x ** 2 + flow_y ** 2).astype(np.float32)
 
             heatmap = self._create_bbox_heatmap(detections, (h, w))
-            out = self._convlstm.add_frame(flow_mag, flow_angle, heatmap)
-            if out is None:
-                metrics = {
-                    "people": float(len(detections)),
-                    "reconstruction_error": 0.0,
-                    "threshold": float(self._convlstm.threshold),
-                }
-                result = FusionPanicResult(is_panic=False, score=0.0, metrics=metrics)
-                self._last_result = result
-                return result
+            out = self._convlstm.add_frame(flow_x, flow_y, heatmap)
+            if out is not None:
+                conv_is_panic, conv_err = out
 
-            is_panic, err = out
-            metrics = {
-                "people": float(len(detections)),
-                "reconstruction_error": float(err),
-                "threshold": float(self._convlstm.threshold),
+        self._prev_gray_small = gray_small
+
+        people = float(len(detections))
+        metrics = dict(baseline_result.metrics)
+        metrics.update(
+            {
+                "people": people,
+                "reconstruction_error": float(conv_err),
+                "threshold": conv_thr,
             }
-            result = FusionPanicResult(is_panic=bool(is_panic), score=float(err), metrics=metrics)
-            self._last_result = result
-            return result
+        )
 
-        # Convert PoseDetection to Detection
-        simple_detections = [
-            Detection(
-                bbox=det.bbox,
-                confidence=det.confidence,
-                class_id=det.class_id,
-                class_name=det.class_name,
-                track_id=None,
-            )
-            for det in detections
-        ]
-        result = self.detector.update(frame, simple_detections)
+        flow_score = float(metrics.get("base_score", baseline_result.score))
+        err_ratio = float(conv_err) / max(conv_thr, 1e-12)
+        fused_score = 0.5 * flow_score + 0.5 * err_ratio
+
+        is_panic = bool(baseline_result.is_panic and conv_is_panic)
+        if err_ratio >= 2.0:
+            is_panic = True
+        if flow_score >= float(self.detector.cfg.score_threshold) * 1.5:
+            is_panic = True
+        if people < float(self.config.min_people):
+            is_panic = False
+
+        result = FusionPanicResult(is_panic=is_panic, score=float(fused_score), metrics=metrics)
         self._last_result = result
         return result
 

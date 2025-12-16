@@ -252,30 +252,38 @@ class PanicConvLSTMDetector:
         self.model.eval()
         
         self.frame_buffer = []
-    
-    def prepare_input(self, flow_mag: np.ndarray, flow_angle: np.ndarray, 
-                     pose_heatmap: Optional[np.ndarray] = None) -> np.ndarray:
+
+    def prepare_input(
+        self,
+        flow_x: np.ndarray,
+        flow_y: np.ndarray,
+        bbox_heatmap: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
         import cv2
-        
-        flow_mag = cv2.resize(flow_mag, self.image_size)
-        flow_angle = cv2.resize(flow_angle, self.image_size)
-        
-        flow_x = flow_mag * np.cos(flow_angle)
-        flow_y = flow_mag * np.sin(flow_angle)
-        
-        if pose_heatmap is None:
-            pose_heatmap = np.zeros_like(flow_mag)
+
+        flow_x = cv2.resize(flow_x, self.image_size)
+        flow_y = cv2.resize(flow_y, self.image_size)
+
+        if bbox_heatmap is None:
+            bbox_heatmap = np.zeros_like(flow_x)
         else:
-            pose_heatmap = cv2.resize(pose_heatmap, self.image_size)
-        
-        features = np.stack([flow_x, flow_y, pose_heatmap], axis=0)
-        features = features / (np.max(np.abs(features)) + 1e-6)
-        
-        return features.astype(np.float32)
-    
-    def add_frame(self, flow_mag: np.ndarray, flow_angle: np.ndarray,
-                  pose_heatmap: Optional[np.ndarray] = None) -> Optional[tuple]:
-        features = self.prepare_input(flow_mag, flow_angle, pose_heatmap)
+            bbox_heatmap = cv2.resize(bbox_heatmap, self.image_size)
+
+        vmax = 10.0
+        flow_x = np.clip(flow_x.astype(np.float32), -vmax, vmax) / vmax
+        flow_y = np.clip(flow_y.astype(np.float32), -vmax, vmax) / vmax
+        bbox_heatmap = np.clip(bbox_heatmap.astype(np.float32), 0.0, 1.0)
+
+        features = np.stack([flow_x, flow_y, bbox_heatmap], axis=0).astype(np.float32)
+        return features
+
+    def add_frame(
+        self,
+        flow_x: np.ndarray,
+        flow_y: np.ndarray,
+        bbox_heatmap: Optional[np.ndarray] = None,
+    ) -> Optional[tuple]:
+        features = self.prepare_input(flow_x, flow_y, bbox_heatmap)
         self.frame_buffer.append(features)
         
         if len(self.frame_buffer) < self.sequence_length:

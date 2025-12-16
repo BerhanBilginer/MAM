@@ -38,6 +38,10 @@ class FusionPanicConfig:
     flow_win_seconds: float = 1.0          # metrics computed per ~1 second window
     flow_use_farneback: bool = True
 
+    remove_global_motion: bool = True
+    entropy_mag_eps: float = 0.05
+    entropy_weighted: bool = False
+
     # Baseline / decision
     warmup_seconds: float = 15.0           # only learn baseline stats (disabled if embeddings used)
     min_people: int = 3
@@ -161,14 +165,34 @@ class YoloPoseFlowFusionPanic:
             pyr_scale=0.5, levels=3, winsize=15, iterations=3,
             poly_n=5, poly_sigma=1.2, flags=0
         )
-        fx, fy = flow[..., 0], flow[..., 1]
+        fx = flow[..., 0].astype(np.float32)
+        fy = flow[..., 1].astype(np.float32)
+
+        if self.cfg.remove_global_motion:
+            fx = fx - np.median(fx)
+            fy = fy - np.median(fy)
+
         mag = np.hypot(fx, fy).astype(np.float32)
         ang = (np.arctan2(fy, fx) + np.pi).astype(np.float32)  # 0..2pi
         return mag, ang
 
-    def _direction_entropy(self, angles: np.ndarray, bins: int = 16) -> float:
+    def _direction_entropy(
+        self,
+        angles: np.ndarray,
+        mags: Optional[np.ndarray] = None,
+        bins: int = 16,
+    ) -> float:
+        if mags is not None:
+            eps = float(self.cfg.entropy_mag_eps)
+            mask = mags > eps
+            if not np.any(mask):
+                return 0.0
+            angles = angles[mask]
+            mags = mags[mask]
+
         # histogram on [0, 2pi)
-        hist, _ = np.histogram(angles, bins=bins, range=(0.0, 2.0 * np.pi))
+        weights = mags if (mags is not None and self.cfg.entropy_weighted) else None
+        hist, _ = np.histogram(angles, bins=bins, range=(0.0, 2.0 * np.pi), weights=weights)
         p = hist.astype(np.float32)
         s = float(p.sum())
         if s <= 0:
@@ -278,7 +302,7 @@ class YoloPoseFlowFusionPanic:
 
         # global flow features
         v_p95_global = float(np.percentile(mag, 95))
-        h_dir_global = self._direction_entropy(ang, bins=16)
+        h_dir_global = self._direction_entropy(ang, mags=mag, bins=16)
 
         # optional: person ROI flow (more sensitive to crowd motion rather than background)
         if self.cfg.use_person_roi_flow and dets:
@@ -291,7 +315,7 @@ class YoloPoseFlowFusionPanic:
                 else:
                     v_p95 = v_p95_global
                 if aa.size > 50:
-                    h_dir = self._direction_entropy(aa, bins=16)
+                    h_dir = self._direction_entropy(aa, mags=mm, bins=16)
                 else:
                     h_dir = h_dir_global
             else:
