@@ -13,6 +13,7 @@ from src.detection.panic.panic import (
     FusionPanicResult,
 )
 from src.detection.panic.convlstm_model import PanicConvLSTMDetector
+from src.detection.panic.features import build_convlstm_features
 
 if TYPE_CHECKING:
     from numpy import typing as npt
@@ -41,7 +42,7 @@ class PanicDetector:
             self._convlstm = PanicConvLSTMDetector(
                 model_path=convlstm_model_path,
                 device=convlstm_device or "cpu",
-                threshold=convlstm_threshold if convlstm_threshold is not None else 0.1,
+                threshold=convlstm_threshold,
                 vmax=convlstm_vmax,
                 sequence_length=int(convlstm_sequence_length),
                 image_size=(int(convlstm_image_size), int(convlstm_image_size)),
@@ -105,37 +106,31 @@ class PanicDetector:
             self._last_result = baseline_result
             return baseline_result
 
-        h, w = self._convlstm.image_size
-        gray_small = self._to_gray_small(frame, (w, h))
-
         conv_is_panic = False
         conv_err = 0.0
         conv_thr = float(self._convlstm.threshold)
 
-        if self._prev_gray_small is not None:
-            flow = cv2.calcOpticalFlowFarneback(
-                self._prev_gray_small,
-                gray_small,
-                None,
-                pyr_scale=0.5,
-                levels=3,
-                winsize=15,
-                iterations=3,
-                poly_n=5,
-                poly_sigma=1.2,
-                flags=0,
-            )
-
-            flow_x = flow[..., 0].astype(np.float32)
-            flow_y = flow[..., 1].astype(np.float32)
-            self._last_flow_mag = np.sqrt(flow_x ** 2 + flow_y ** 2).astype(np.float32)
-
-            heatmap = self._create_bbox_heatmap(detections, (h, w))
-            out = self._convlstm.add_frame(flow_x, flow_y, heatmap)
+        # Use unified feature builder
+        features, prev_gray_small = build_convlstm_features(
+            frame,
+            detections,
+            self._prev_gray_small,
+            image_size=self._convlstm.image_size,
+            vmax=self._convlstm.vmax,
+        )
+        
+        self._prev_gray_small = prev_gray_small
+        
+        if features is not None:
+            # Compute flow mag for visualization
+            if features.shape[0] >= 2:
+                flow_x = features[0] * self._convlstm.vmax
+                flow_y = features[1] * self._convlstm.vmax
+                self._last_flow_mag = np.sqrt(flow_x ** 2 + flow_y ** 2).astype(np.float32)
+            
+            out = self._convlstm.add_frame_features(features)
             if out is not None:
                 conv_is_panic, conv_err = out
-
-        self._prev_gray_small = gray_small
 
         people = float(len(detections))
         metrics = dict(baseline_result.metrics)

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 
+
 class ConvLSTMCell(nn.Module):
     """ConvLSTM cell implementation."""
     
@@ -219,35 +220,48 @@ class PanicConvLSTMDetector:
         self,
         model_path: str,
         device: str = "cpu",
-        threshold: float = 0.1,
+        threshold: float | None = None,
         vmax: float | None = None,
-        sequence_length: int = 16,
-        image_size: tuple = (64, 64),
+        sequence_length: int | None = None,
+        image_size: int | None = None,
     ):
         self.device = torch.device(device)
-        self.threshold = threshold
+        self.threshold = float(threshold) if threshold is not None else 0.1
         self.vmax = float(vmax) if vmax is not None else 10.0
-        self.sequence_length = sequence_length
-        self.image_size = image_size
+        self.sequence_length = sequence_length if sequence_length is not None else 16
+        self.image_size = image_size if image_size is not None else 96
         
+        # Create model with fixed 5 channels (P3)
         self.model = PanicConvLSTMAutoencoder(
-            input_channels=3,
+            input_channels=5,
             hidden_dims=[32, 64, 32],
             kernel_size=(3, 3),
             num_layers=3,
         )
         
+        # Load checkpoint if exists
         if Path(model_path).exists():
             try:
                 checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
             except TypeError:
                 checkpoint = torch.load(model_path, map_location=self.device)
+            
             self.model.load_state_dict(checkpoint['model_state_dict'])
-            self.threshold = float(checkpoint.get('threshold', self.threshold))
+            
+            # Read config from checkpoint if not overridden
+            if sequence_length is None:
+                self.sequence_length = int(checkpoint.get('sequence_length', 16))
+            if image_size is None:
+                self.image_size = int(checkpoint.get('image_size', 96))
+            if threshold is None:
+                self.threshold = float(checkpoint.get('threshold', self.threshold))
             if vmax is None:
                 self.vmax = float(checkpoint.get('vmax', self.vmax))
+            
             print(f"Loaded ConvLSTM model from {model_path}")
+            print(f"Channels: 5 (P3: flow_x, flow_y, flow_mag, bbox_heatmap, divergence)")
             print(f"Threshold: {self.threshold:.6g}")
+            print(f"Image size: {self.image_size}x{self.image_size}")
         else:
             print(f"WARNING: Model not found at {model_path}")
             print("Using untrained model - train first!")
@@ -257,37 +271,18 @@ class PanicConvLSTMDetector:
         
         self.frame_buffer = []
 
-    def prepare_input(
+    def add_frame_features(
         self,
-        flow_x: np.ndarray,
-        flow_y: np.ndarray,
-        bbox_heatmap: Optional[np.ndarray] = None,
-    ) -> np.ndarray:
-        import cv2
-
-        flow_x = cv2.resize(flow_x, self.image_size)
-        flow_y = cv2.resize(flow_y, self.image_size)
-
-        if bbox_heatmap is None:
-            bbox_heatmap = np.zeros_like(flow_x)
-        else:
-            bbox_heatmap = cv2.resize(bbox_heatmap, self.image_size)
-
-        vmax = float(self.vmax)
-        flow_x = np.clip(flow_x.astype(np.float32), -vmax, vmax) / vmax
-        flow_y = np.clip(flow_y.astype(np.float32), -vmax, vmax) / vmax
-        bbox_heatmap = np.clip(bbox_heatmap.astype(np.float32), 0.0, 1.0)
-
-        features = np.stack([flow_x, flow_y, bbox_heatmap], axis=0).astype(np.float32)
-        return features
-
-    def add_frame(
-        self,
-        flow_x: np.ndarray,
-        flow_y: np.ndarray,
-        bbox_heatmap: Optional[np.ndarray] = None,
+        features: np.ndarray,
     ) -> Optional[tuple]:
-        features = self.prepare_input(flow_x, flow_y, bbox_heatmap)
+        """Add pre-computed features to buffer and return anomaly prediction.
+        
+        Args:
+            features: Feature array of shape (C, H, W) from build_convlstm_features
+        
+        Returns:
+            (is_panic, error) tuple or None if buffer not full yet
+        """
         self.frame_buffer.append(features)
         
         if len(self.frame_buffer) < self.sequence_length:

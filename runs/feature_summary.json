@@ -1,0 +1,195 @@
+{
+  "baseline_stats": {
+    "v_p95_global": {
+      "median": 0.3606380224227905,
+      "mad": 0.15046679973602295
+    },
+    "v_p99_global": {
+      "median": 0.5430192351341248,
+      "mad": 0.23338592052459717
+    },
+    "entropy_global": {
+      "median": 3.2441892623901367,
+      "mad": 0.2768481969833374
+    },
+    "coh_global": {
+      "median": 0.2639463543891907,
+      "mad": 0.14051268994808197
+    },
+    "v_p95_roi": {
+      "median": 0.44199320673942566,
+      "mad": 0.19136449694633484
+    },
+    "v_p99_roi": {
+      "median": 0.5318078398704529,
+      "mad": 0.24346378445625305
+    },
+    "entropy_roi": {
+      "median": 2.6815972328186035,
+      "mad": 0.4458061456680298
+    },
+    "coh_roi": {
+      "median": 0.38187703490257263,
+      "mad": 0.19001062214374542
+    },
+    "people_count": {
+      "median": 8.880000114440918,
+      "mad": 2.8000001907348633
+    },
+    "bbox_area_ratio": {
+      "median": 0.1228742003440857,
+      "mad": 0.10037654638290405
+    },
+    "dv_p95": {
+      "median": -0.000267013005213812,
+      "mad": 0.024235522374510765
+    },
+    "dentropy": {
+      "median": 0.0,
+      "mad": 0.04754694923758507
+    },
+    "dcoh": {
+      "median": -0.0004529676225502044,
+      "mad": 0.028212755918502808
+    }
+  },
+  "feature_ranking": [
+    {
+      "feature": "v_p95_global",
+      "normal_rate": 0.044581091468101464,
+      "pre_rate": 0.10526315789473684,
+      "panic_rate": 0.6258064516129033,
+      "separation": 0.5812253601448019,
+      "latency_sec": 1.5600000000000005,
+      "baseline_median": 0.3606380224227905,
+      "baseline_mad": 0.15046679973602295
+    },
+    {
+      "feature": "v_p99_global",
+      "normal_rate": 0.05111452728670254,
+      "pre_rate": 0.10526315789473684,
+      "panic_rate": 0.5806451612903226,
+      "separation": 0.5295306340036201,
+      "latency_sec": 2.039999999999999,
+      "baseline_median": 0.5430192351341248,
+      "baseline_mad": 0.23338592052459717
+    },
+    {
+      "feature": "v_p95_roi",
+      "normal_rate": 0.03766333589546503,
+      "pre_rate": 0.0,
+      "panic_rate": 0.5032258064516129,
+      "separation": 0.46556247055614786,
+      "latency_sec": 1.5600000000000005,
+      "baseline_median": 0.44199320673942566,
+      "baseline_mad": 0.19136449694633484
+    },
+    {
+      "feature": "v_p99_roi",
+      "normal_rate": 0.053036126056879324,
+      "pre_rate": 0.0,
+      "panic_rate": 0.3935483870967742,
+      "separation": 0.34051226103989485,
+      "latency_sec": 2.039999999999999,
+      "baseline_median": 0.5318078398704529,
+      "baseline_mad": 0.24346378445625305
+    },
+    {
+      "feature": "dv_p95",
+      "normal_rate": 0.08916218293620293,
+      "pre_rate": 0.05263157894736842,
+      "panic_rate": 0.25806451612903225,
+      "separation": 0.16890233319282932,
+      "latency_sec": 1.08,
+      "baseline_median": -0.000267013005213812,
+      "baseline_mad": 0.024235522374510765
+    },
+    {
+      "feature": "bbox_area_ratio",
+      "normal_rate": 0.011529592621060722,
+      "pre_rate": 0.0,
+      "panic_rate": 0.05161290322580645,
+      "separation": 0.04008331060474573,
+      "latency_sec": 40.92,
+      "baseline_median": 0.1228742003440857,
+      "baseline_mad": 0.10037654638290405
+    },
+    {
+      "feature": "dentropy",
+      "normal_rate": 0.02382782475019216,
+      "pre_rate": 0.15789473684210525,
+      "panic_rate": 0.04516129032258064,
+      "separation": 0.021333465572388483,
+      "latency_sec": 28.92,
+      "baseline_median": 0.0,
+      "baseline_mad": 0.04754694923758507
+    },
+    {
+      "feature": "dcoh",
+      "normal_rate": 0.04496541122213682,
+      "pre_rate": 0.10526315789473684,
+      "panic_rate": 0.05806451612903226,
+      "separation": 0.013099104906895441,
+      "latency_sec": 0.11999999999999922,
+      "baseline_median": -0.0004529676225502044,
+      "baseline_mad": 0.028212755918502808
+    },
+    {
+      "feature": "entropy_global",
+      "normal_rate": 0.0,
+      "pre_rate": 0.0,
+      "panic_rate": 0.0,
+      "separation": 0.0,
+      "latency_sec": null,
+      "baseline_median": 3.2441892623901367,
+      "baseline_mad": 0.2768481969833374
+    },
+    {
+      "feature": "entropy_roi",
+      "normal_rate": 0.0,
+      "pre_rate": 0.0,
+      "panic_rate": 0.0,
+      "separation": 0.0,
+      "latency_sec": null,
+      "baseline_median": 2.6815972328186035,
+      "baseline_mad": 0.4458061456680298
+    },
+    {
+      "feature": "coh_roi",
+      "normal_rate": 0.0,
+      "pre_rate": 0.0,
+      "panic_rate": 0.0,
+      "separation": 0.0,
+      "latency_sec": null,
+      "baseline_median": 0.38187703490257263,
+      "baseline_mad": 0.19001062214374542
+    },
+    {
+      "feature": "people_count",
+      "normal_rate": 0.0,
+      "pre_rate": 0.0,
+      "panic_rate": 0.0,
+      "separation": 0.0,
+      "latency_sec": null,
+      "baseline_median": 8.880000114440918,
+      "baseline_mad": 2.8000001907348633
+    },
+    {
+      "feature": "coh_global",
+      "normal_rate": 0.0007686395080707148,
+      "pre_rate": 0.0,
+      "panic_rate": 0.0,
+      "separation": -0.0007686395080707148,
+      "latency_sec": null,
+      "baseline_median": 0.2639463543891907,
+      "baseline_mad": 0.14051268994808197
+    }
+  ],
+  "config": {
+    "image_size": 96,
+    "window_frames": 25,
+    "stride_frames": 12,
+    "fps": 25.0,
+    "onset_sec": 10.0
+  }
+}

@@ -27,6 +27,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.detection.panic.convlstm_model import PanicConvLSTMAutoencoder
 from src.detection.utils.detection import load_model, detect_people
+from src.detection.panic.features import build_convlstm_features
+from src.detection.utils.pose import detect_people as detect_people_pose
 
 
 class NormalMotionDataset(Dataset):
@@ -93,35 +95,17 @@ class H5SequenceDataset(Dataset):
         return torch.from_numpy(arr).float()
 
 
-def create_bbox_heatmap(detections, image_size: tuple) -> np.ndarray:
-    """Create bbox heatmap from detections."""
-    h, w = image_size
-    heatmap = np.zeros((h, w), dtype=np.float32)
-    
-    for det in detections:
-        x1, y1, x2, y2 = det.bbox
-        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-        x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(w, x2), min(h, y2)
-        
-        if x2 > x1 and y2 > y1:
-            heatmap[y1:y2, x1:x2] += 1.0
-    
-    if heatmap.max() > 0:
-        heatmap = heatmap / heatmap.max()
-    
-    return heatmap
 
 
 def extract_sequences_from_video(
     video_path: str,
     model,
     sequence_length: int = 16,
-    image_size: tuple = (64, 64),
+    image_size: int = 96,
     stride: int = 8,
     vmax: float = 10.0,
 ) -> list:
-    """Extract sequences from a video."""
+    """Extract sequences from a video using unified feature builder."""
     print(f"\nProcessing: {video_path}")
     
     cap = cv2.VideoCapture(video_path)
@@ -135,7 +119,7 @@ def extract_sequences_from_video(
     sequences = []
     frame_buffer = []
     frame_idx = 0
-    prev_gray = None
+    prev_gray_small = None
     
     try:
         while True:
@@ -145,26 +129,17 @@ def extract_sequences_from_video(
             
             frame_idx += 1
             
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray_small = cv2.resize(gray, image_size)
+            detections = detect_people_pose(model, frame, conf=0.25, keypoint_conf_threshold=0.3)
             
-            if prev_gray is not None:
-                flow = cv2.calcOpticalFlowFarneback(
-                    prev_gray, gray_small, None,
-                    pyr_scale=0.5, levels=3, winsize=15,
-                    iterations=3, poly_n=5, poly_sigma=1.2, flags=0
-                )
- 
-                detections = detect_people(model, frame, conf=0.25, track=False)
-                bbox_heatmap = create_bbox_heatmap(detections, gray_small.shape)
- 
-                flow_x = flow[..., 0].astype(np.float32)
-                flow_y = flow[..., 1].astype(np.float32)
-                flow_x = np.clip(flow_x, -vmax, vmax) / vmax
-                flow_y = np.clip(flow_y, -vmax, vmax) / vmax
-                bbox_heatmap = np.clip(bbox_heatmap, 0.0, 1.0).astype(np.float32)
- 
-                features = np.stack([flow_x, flow_y, bbox_heatmap], axis=0).astype(np.float32)
+            features, prev_gray_small = build_convlstm_features(
+                frame,
+                detections,
+                prev_gray_small,
+                image_size=image_size,
+                vmax=vmax,
+            )
+            
+            if features is not None:
                 frame_buffer.append(features)
                 
                 if len(frame_buffer) == sequence_length:
@@ -174,8 +149,6 @@ def extract_sequences_from_video(
                     for _ in range(stride):
                         if frame_buffer:
                             frame_buffer.pop(0)
-            
-            prev_gray = gray_small
             
             if frame_idx % 100 == 0:
                 print(f"  Processed {frame_idx}/{total_frames} frames, {len(sequences)} sequences")
@@ -191,10 +164,11 @@ def iter_sequences_from_video(
     video_path: str,
     model,
     sequence_length: int = 16,
-    image_size: tuple = (64, 64),
+    image_size: int = 96,
     stride: int = 8,
     vmax: float = 10.0,
 ) -> Iterator[np.ndarray]:
+    """Iterate sequences from a video using unified feature builder."""
     print(f"\nProcessing: {video_path}")
 
     cap = cv2.VideoCapture(video_path)
@@ -207,7 +181,7 @@ def iter_sequences_from_video(
 
     frame_buffer: list[np.ndarray] = []
     frame_idx = 0
-    prev_gray = None
+    prev_gray_small = None
 
     try:
         while True:
@@ -217,34 +191,17 @@ def iter_sequences_from_video(
 
             frame_idx += 1
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray_small = cv2.resize(gray, image_size)
+            detections = detect_people_pose(model, frame, conf=0.25, keypoint_conf_threshold=0.3)
+            
+            features, prev_gray_small = build_convlstm_features(
+                frame,
+                detections,
+                prev_gray_small,
+                image_size=image_size,
+                vmax=vmax,
+            )
 
-            if prev_gray is not None:
-                flow = cv2.calcOpticalFlowFarneback(
-                    prev_gray,
-                    gray_small,
-                    None,
-                    pyr_scale=0.5,
-                    levels=3,
-                    winsize=15,
-                    iterations=3,
-                    poly_n=5,
-                    poly_sigma=1.2,
-                    flags=0,
-                )
- 
-                detections = detect_people(model, frame, conf=0.25, track=False)
-                bbox_heatmap = create_bbox_heatmap(detections, gray_small.shape)
- 
-                vmax = 10.0
-                flow_x = flow[..., 0].astype(np.float32)
-                flow_y = flow[..., 1].astype(np.float32)
-                flow_x = np.clip(flow_x, -vmax, vmax) / vmax
-                flow_y = np.clip(flow_y, -vmax, vmax) / vmax
-                bbox_heatmap = np.clip(bbox_heatmap, 0.0, 1.0).astype(np.float32)
- 
-                features = np.stack([flow_x, flow_y, bbox_heatmap], axis=0).astype(np.float32)
+            if features is not None:
                 frame_buffer.append(features)
 
                 if len(frame_buffer) == sequence_length:
@@ -253,8 +210,6 @@ def iter_sequences_from_video(
                     for _ in range(stride):
                         if frame_buffer:
                             frame_buffer.pop(0)
-
-            prev_gray = gray_small
 
             if frame_idx % 100 == 0:
                 print(f"  Processed {frame_idx}/{total_frames} frames")
@@ -334,6 +289,8 @@ def train_model(
                 'val_loss': val_loss,
                 'threshold': float(threshold),
                 'vmax': float(feature_vmax),
+                'sequence_length': getattr(model, '_sequence_length', 16),
+                'image_size': getattr(model, '_image_size', 96),
             }, save_path)
             print(f"  ✓ Saved best model to {save_path}")
 
@@ -353,7 +310,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
     parser.add_argument("--batch-size", type=int, default=4, help="Batch size")
     parser.add_argument("--sequence-length", type=int, default=16, help="Sequence length")
-    parser.add_argument("--image-size", type=int, default=64, help="Image size")
+    parser.add_argument("--image-size", type=int, default=96, help="Image size (square)")
     parser.add_argument("--vmax", type=float, default=10.0, help="Flow vmax for normalization (px/frame)")
     parser.add_argument("--val-split", type=float, default=0.2, help="Validation split")
     parser.add_argument(
@@ -411,7 +368,7 @@ def main():
         if args.reuse_hdf5_cache and h5_path.exists():
             print(f"Reusing HDF5 cache: {h5_path}")
         else:
-            seq_shape = (args.sequence_length, 3, args.image_size, args.image_size)
+            seq_shape = (args.sequence_length, 5, args.image_size, args.image_size)
             dtype = np.float16 if args.cache_float16 else np.float32
             print(f"Writing HDF5 cache to: {h5_path}")
 
@@ -448,9 +405,10 @@ def main():
                             video_path,
                             yolo_model,
                             sequence_length=args.sequence_length,
-                            image_size=(args.image_size, args.image_size),
+                            image_size=args.image_size,
                             stride=args.sequence_length // 2,
                             vmax=float(args.vmax),
+                            pack=args.pack,
                         ):
                             if dtype == np.float16:
                                 seq = seq.astype(np.float16)
@@ -543,9 +501,10 @@ def main():
                             video_path,
                             yolo_model,
                             sequence_length=args.sequence_length,
-                            image_size=(args.image_size, args.image_size),
+                            image_size=args.image_size,
                             stride=args.sequence_length // 2,
                             vmax=float(args.vmax),
+                            pack=args.pack,
                         ):
                             out = cache_dir / f"train_seq_{run_id}_{train_idx:08d}.npy"
                             np.save(out, seq.astype(np.float16) if args.cache_float16 else seq)
@@ -561,9 +520,10 @@ def main():
                             video_path,
                             yolo_model,
                             sequence_length=args.sequence_length,
-                            image_size=(args.image_size, args.image_size),
+                            image_size=args.image_size,
                             stride=args.sequence_length // 2,
                             vmax=float(args.vmax),
+                            pack=args.pack,
                         ):
                             out = cache_dir / f"val_seq_{run_id}_{val_idx:08d}.npy"
                             np.save(out, seq.astype(np.float16) if args.cache_float16 else seq)
@@ -607,9 +567,10 @@ def main():
                             video_path,
                             yolo_model,
                             sequence_length=args.sequence_length,
-                            image_size=(args.image_size, args.image_size),
+                            image_size=args.image_size,
                             stride=args.sequence_length // 2,
                             vmax=float(args.vmax),
+                            pack=args.pack,
                         ):
                             out = cache_dir / f"seq_{run_id}_{seq_idx:08d}.npy"
                             np.save(out, seq.astype(np.float16) if args.cache_float16 else seq)
@@ -649,9 +610,10 @@ def main():
                         video_path,
                         yolo_model,
                         sequence_length=args.sequence_length,
-                        image_size=(args.image_size, args.image_size),
+                        image_size=args.image_size,
                         stride=args.sequence_length // 2,
                         vmax=float(args.vmax),
+                        pack=args.pack,
                     )
                     train_sequences.extend(sequences)
 
@@ -662,9 +624,10 @@ def main():
                         video_path,
                         yolo_model,
                         sequence_length=args.sequence_length,
-                        image_size=(args.image_size, args.image_size),
+                        image_size=args.image_size,
                         stride=args.sequence_length // 2,
                         vmax=float(args.vmax),
+                        pack=args.pack,
                     )
                     val_sequences.extend(sequences)
 
@@ -689,9 +652,10 @@ def main():
                         video_path,
                         yolo_model,
                         sequence_length=args.sequence_length,
-                        image_size=(args.image_size, args.image_size),
+                        image_size=args.image_size,
                         stride=args.sequence_length // 2,
                         vmax=float(args.vmax),
+                        pack=args.pack,
                     )
                     all_sequences.extend(sequences)
 
@@ -727,12 +691,16 @@ def main():
     )
     
     print("\nCreating model...")
+    print(f"Feature channels: 5 (P3: flow_x, flow_y, flow_mag, bbox_heatmap, divergence)")
+    
     model = PanicConvLSTMAutoencoder(
-        input_channels=3,
+        input_channels=5,
         hidden_dims=[32, 64, 32],
         kernel_size=(3, 3),
         num_layers=3,
     )
+    model._sequence_length = args.sequence_length
+    model._image_size = args.image_size
     model.to(device)
     
     total_params = sum(p.numel() for p in model.parameters())
