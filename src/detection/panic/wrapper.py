@@ -45,7 +45,7 @@ class PanicDetector:
                 threshold=convlstm_threshold,
                 vmax=convlstm_vmax,
                 sequence_length=int(convlstm_sequence_length),
-                image_size=(int(convlstm_image_size), int(convlstm_image_size)),
+                image_size=int(convlstm_image_size),
             )
 
         self.detector = YoloPoseFlowFusionPanic(fps=fps, config=self.config)
