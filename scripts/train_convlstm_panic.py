@@ -408,7 +408,6 @@ def main():
                             image_size=args.image_size,
                             stride=args.sequence_length // 2,
                             vmax=float(args.vmax),
-                            pack=args.pack,
                         ):
                             if dtype == np.float16:
                                 seq = seq.astype(np.float16)
@@ -427,7 +426,7 @@ def main():
                                 video_path,
                                 yolo_model,
                                 sequence_length=args.sequence_length,
-                                image_size=(args.image_size, args.image_size),
+                                image_size=args.image_size,
                                 stride=args.sequence_length // 2,
                                 vmax=float(args.vmax),
                             ):
@@ -504,7 +503,6 @@ def main():
                             image_size=args.image_size,
                             stride=args.sequence_length // 2,
                             vmax=float(args.vmax),
-                            pack=args.pack,
                         ):
                             out = cache_dir / f"train_seq_{run_id}_{train_idx:08d}.npy"
                             np.save(out, seq.astype(np.float16) if args.cache_float16 else seq)
@@ -523,7 +521,6 @@ def main():
                             image_size=args.image_size,
                             stride=args.sequence_length // 2,
                             vmax=float(args.vmax),
-                            pack=args.pack,
                         ):
                             out = cache_dir / f"val_seq_{run_id}_{val_idx:08d}.npy"
                             np.save(out, seq.astype(np.float16) if args.cache_float16 else seq)
@@ -570,7 +567,6 @@ def main():
                             image_size=args.image_size,
                             stride=args.sequence_length // 2,
                             vmax=float(args.vmax),
-                            pack=args.pack,
                         ):
                             out = cache_dir / f"seq_{run_id}_{seq_idx:08d}.npy"
                             np.save(out, seq.astype(np.float16) if args.cache_float16 else seq)
@@ -613,7 +609,6 @@ def main():
                         image_size=args.image_size,
                         stride=args.sequence_length // 2,
                         vmax=float(args.vmax),
-                        pack=args.pack,
                     )
                     train_sequences.extend(sequences)
 
@@ -627,7 +622,6 @@ def main():
                         image_size=args.image_size,
                         stride=args.sequence_length // 2,
                         vmax=float(args.vmax),
-                        pack=args.pack,
                     )
                     val_sequences.extend(sequences)
 
@@ -655,7 +649,6 @@ def main():
                         image_size=args.image_size,
                         stride=args.sequence_length // 2,
                         vmax=float(args.vmax),
-                        pack=args.pack,
                     )
                     all_sequences.extend(sequences)
 
